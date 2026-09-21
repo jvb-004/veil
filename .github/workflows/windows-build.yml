@@ -49,7 +49,9 @@ jobs:
               echo "| path | magenta | cyan |"
               echo "|---|---|---|"
               echo "| A BitBlt from screen DC | $(jq -r .A_bitblt_screen_dc.magenta "$F") | $(jq -r .A_bitblt_screen_dc.cyan "$F") |"
-              echo "| B PrintWindow RENDERFULLCONTENT | $(jq -r .B_printwindow_desktop.magenta "$F") | $(jq -r .B_printwindow_desktop.cyan "$F") |"
+              echo "| B PrintWindow RENDERFULLCONTENT | $(jq -r .B_printwindow_protected.magenta "$F") | $(jq -r .B_printwindow_control.cyan "$F") |"
+              echo ""
+              echo "PrintWindow is valid evidence: \`$(jq -r .B_printwindow_is_valid_evidence "$F")\`"
               echo ""
               echo "<details><summary>raw</summary>"; echo ""
               echo '```json'; cat "$F"; echo '```'

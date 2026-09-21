@@ -35,7 +35,7 @@ mod windows_probe {
     use windows_sys::Win32::Storage::Xps::PrintWindow;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetDesktopWindow, GetSystemMetrics,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetSystemMetrics,
         GetWindowDisplayAffinity, PeekMessageW, RegisterClassW, SetWindowDisplayAffinity,
         ShowWindow, TranslateMessage, MSG, PM_REMOVE, PW_RENDERFULLCONTENT, SM_CXSCREEN,
         SM_CYSCREEN, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WNDCLASSW,
@@ -175,6 +175,21 @@ mod windows_probe {
         counts
     }
 
+    /// PrintWindow into an offscreen DC sized to the window, then count.
+    unsafe fn print_window_counts(hwnd: HWND) -> Counts {
+        let screen = GetDC(std::ptr::null_mut());
+        let memory_dc = CreateCompatibleDC(screen);
+        let bitmap = CreateCompatibleBitmap(screen, WIDTH, HEIGHT);
+        let previous = SelectObject(memory_dc, bitmap as *mut c_void);
+        PrintWindow(hwnd, memory_dc, PW_RENDERFULLCONTENT);
+        let counts = count_from_dc(memory_dc, WIDTH, HEIGHT);
+        SelectObject(memory_dc, previous);
+        DeleteObject(bitmap as *mut c_void);
+        DeleteDC(memory_dc);
+        ReleaseDC(std::ptr::null_mut(), screen);
+        counts
+    }
+
     unsafe fn affinity_of(hwnd: HWND) -> &'static str {
         let mut value = 0u32;
         if GetWindowDisplayAffinity(hwnd, &mut value) == 0 {
@@ -202,33 +217,32 @@ mod windows_probe {
             let bitblt = count_from_dc(screen, width, height);
             ReleaseDC(std::ptr::null_mut(), screen);
 
-            // B: PrintWindow on the desktop with RENDERFULLCONTENT, which is the
-            // path that defeats naive "hide the window" tricks.
-            let desktop = GetDesktopWindow();
-            let desktop_dc = GetDC(desktop);
-            let memory_dc = CreateCompatibleDC(desktop_dc);
-            let bitmap = CreateCompatibleBitmap(desktop_dc, width, height);
-            let previous = SelectObject(memory_dc, bitmap as *mut c_void);
-            PrintWindow(desktop, memory_dc, PW_RENDERFULLCONTENT);
-            let printwindow = count_from_dc(memory_dc, width, height);
-            SelectObject(memory_dc, previous);
-            DeleteObject(bitmap as *mut c_void);
-            DeleteDC(memory_dc);
-            ReleaseDC(desktop, desktop_dc);
+            // B: PrintWindow aimed at each window in turn. Against the desktop
+            // HWND it returns black, which measures nothing; against a real
+            // window it is the path that defeats naive hide-the-window tricks.
+            let printwindow_protected = print_window_counts(protected);
+            let printwindow_control = print_window_counts(control);
 
-            let control_visible = bitblt.cyan > 0;
-            let protected_visible = bitblt.magenta > 0;
+            // Every path needs its OWN control. A path that captured nothing at
+            // all is an invalid measurement, not proof of exclusion, and the
+            // first version of this probe could not tell those two apart.
+            let bitblt_valid = bitblt.cyan > 0;
+            let printwindow_valid = printwindow_control.cyan > 0;
 
-            let verdict = if !control_visible {
+            let verdict = if !bitblt_valid {
                 "INVALID: the unprotected control window was not captured either, \
                  so there is no display or no capture at all"
-            } else if protected_visible {
+            } else if bitblt.magenta > 0 {
                 "NOT_EXCLUDED: WDA_EXCLUDEFROMCAPTURE did not remove the window"
-            } else if printwindow.magenta > 0 {
+            } else if printwindow_valid && printwindow_protected.magenta > 0 {
                 "PARTIAL: excluded from BitBlt but visible to PrintWindow"
+            } else if printwindow_valid {
+                "EXCLUDED: absent from BitBlt and from PrintWindow, while the \
+                 control window was captured normally by both"
             } else {
-                "EXCLUDED: absent from every capture path while the control window \
-                 in the same frame was captured normally"
+                "EXCLUDED_BY_BITBLT_ONLY: absent from BitBlt while the control \
+                 window in the same frame was captured normally. PrintWindow \
+                 captured nothing at all, so it is not evidence either way"
             };
 
             let report = serde_json::json!({
@@ -237,9 +251,9 @@ mod windows_probe {
                 "protected_window_affinity": affinity_of(protected),
                 "control_window_affinity": affinity_of(control),
                 "A_bitblt_screen_dc": { "magenta": bitblt.magenta, "cyan": bitblt.cyan },
-                "B_printwindow_desktop": {
-                    "magenta": printwindow.magenta, "cyan": printwindow.cyan
-                },
+                "B_printwindow_protected": { "magenta": printwindow_protected.magenta },
+                "B_printwindow_control": { "cyan": printwindow_control.cyan },
+                "B_printwindow_is_valid_evidence": printwindow_valid,
                 "verdict": verdict,
             });
 
