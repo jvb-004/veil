@@ -52,9 +52,16 @@ pub fn spawn() -> watch::Receiver<ShareState> {
 }
 
 async fn poll() -> Option<ShareState> {
-    let output = tokio::process::Command::new("pw-dump").output().await.ok()?;
+    let output = tokio::process::Command::new("pw-dump")
+        .output()
+        .await
+        .ok()?;
     let objects: Vec<PwObject> = serde_json::from_slice(&output.stdout).ok()?;
-    Some(evaluate(objects.into_iter().filter_map(|o| o.info.and_then(|i| i.props))))
+    Some(evaluate(
+        objects
+            .into_iter()
+            .filter_map(|o| o.info.and_then(|i| i.props)),
+    ))
 }
 
 /// Measured, not assumed. A live screencast on GNOME 50 / Mutter 50 shows up as
@@ -72,8 +79,14 @@ where
     let mut consumers = Vec::new();
 
     for props in props_iter {
-        let class = props.get("media.class").and_then(|v| v.as_str()).unwrap_or("");
-        let name = props.get("node.name").and_then(|v| v.as_str()).unwrap_or("");
+        let class = props
+            .get("media.class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = props
+            .get("node.name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         match class {
             "Stream/Output/Video" => {
                 let description = props
@@ -96,7 +109,11 @@ where
         }
     }
 
-    ShareState { sharing: !scope.is_empty(), scope, consumers }
+    ShareState {
+        sharing: !scope.is_empty(),
+        scope,
+        consumers,
+    }
 }
 
 #[cfg(test)]
@@ -141,8 +158,14 @@ mod tests {
     fn the_consumer_is_reported_so_the_overlay_can_judge() {
         let state = evaluate(
             vec![
-                props(&[("media.class", "Stream/Output/Video"), ("node.name", "gnome-shell")]),
-                props(&[("media.class", "Stream/Input/Video"), ("application.name", "Zoom")]),
+                props(&[
+                    ("media.class", "Stream/Output/Video"),
+                    ("node.name", "gnome-shell"),
+                ]),
+                props(&[
+                    ("media.class", "Stream/Input/Video"),
+                    ("application.name", "Zoom"),
+                ]),
             ]
             .into_iter(),
         );

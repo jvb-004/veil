@@ -19,11 +19,16 @@ use tokio::sync::mpsc;
 const CHUNK_BYTES: usize = 3200;
 
 pub struct Capture {
+    /// Held so the recorder outlives this struct's owner. kill_on_drop means
+    /// letting go of this is what stops the capture.
     child: Child,
 }
 
 impl Capture {
-    pub fn start(target: Option<&str>, label: &'static str) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
+    pub fn start(
+        target: Option<&str>,
+        label: &'static str,
+    ) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
         let mut command = Command::new("pw-record");
         command
             .arg("--format=s16")

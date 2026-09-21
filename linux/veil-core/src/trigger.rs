@@ -87,7 +87,10 @@ impl Trigger {
     fn fire(&mut self, text: &str, speculative: bool) -> Decision {
         self.last_fired_text = text.to_string();
         self.last_fired_at = Instant::now();
-        Decision { text: text.to_string(), speculative }
+        Decision {
+            text: text.to_string(),
+            speculative,
+        }
     }
 }
 
@@ -115,7 +118,13 @@ fn looks_like_question(text: &str) -> bool {
 }
 
 const IMPERATIVES: &[&str] = &[
-    "tell me", "walk me through", "explain", "describe", "give me", "talk about", "let's talk",
+    "tell me",
+    "walk me through",
+    "explain",
+    "describe",
+    "give me",
+    "talk about",
+    "let's talk",
     "go over",
 ];
 
@@ -126,8 +135,16 @@ fn is_imperative(text: &str) -> bool {
 
 /// Cheap token overlap. Enough to answer "is this the same question".
 fn similarity(a: &str, b: &str) -> f64 {
-    let sa: HashSet<String> = a.to_lowercase().split_whitespace().map(str::to_string).collect();
-    let sb: HashSet<String> = b.to_lowercase().split_whitespace().map(str::to_string).collect();
+    let sa: HashSet<String> = a
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let sb: HashSet<String> = b
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
     if sa.is_empty() || sb.is_empty() {
         return 0.0;
     }
@@ -158,7 +175,9 @@ mod tests {
     fn final_refires_when_the_question_actually_changed() {
         let mut t = Trigger::default();
         t.fire_manually("how much is a litre of milk");
-        assert!(t.consider_final("what is the capital of Azerbaijan?").is_some());
+        assert!(t
+            .consider_final("what is the capital of Azerbaijan?")
+            .is_some());
     }
 
     #[test]

@@ -26,15 +26,15 @@ jobs:
       - name: Test
         working-directory: linux
         run: cargo test --release --workspace
-      # Advisory, not a gate: rustfmt and clippy are not installed on the dev
-      # machine, so gating on them would mean fixing style blind from CI logs.
-      # Build and test above are the hard gates.
+      # Advisory: clippy-driver needs an upstream rust-std and sysroot that a
+      # distro-packaged toolchain does not provide, so it cannot be run on the
+      # dev machine and gating on it would mean fixing lints blind from logs.
       - name: Clippy
         continue-on-error: true
         working-directory: linux
         run: cargo clippy --release --workspace --all-targets
+      # A gate: rustfmt runs locally, so there is no excuse for drift.
       - name: Format
-        continue-on-error: true
         working-directory: linux
         run: cargo fmt --all --check
       - name: Extension syntax

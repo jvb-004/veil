@@ -24,14 +24,23 @@ pub struct Claude {
 
 impl Claude {
     pub fn new(api_key: String, model: String, persona: String, user_context: String) -> Self {
-        Self { client: reqwest::Client::new(), api_key, model, persona, user_context }
+        Self {
+            client: reqwest::Client::new(),
+            api_key,
+            model,
+            persona,
+            user_context,
+        }
     }
 
     fn system_prompt(&self) -> String {
         let background = if self.user_context.is_empty() {
             String::new()
         } else {
-            format!("\n\nBackground on the user and the subject:\n{}", self.user_context)
+            format!(
+                "\n\nBackground on the user and the subject:\n{}",
+                self.user_context
+            )
         };
         format!(
             "{persona}\n\n\
@@ -60,7 +69,8 @@ impl Claude {
         let system = self.system_prompt();
 
         tokio::spawn(async move {
-            if let Err(e) = stream(client, api_key, model, system, question, transcript, &tx).await {
+            if let Err(e) = stream(client, api_key, model, system, question, transcript, &tx).await
+            {
                 let _ = tx.send(format!("\n[error: {e}]")).await;
             }
         });
@@ -108,7 +118,10 @@ async fn stream(
     if !response.status().is_success() {
         let status = response.status();
         let detail = response.text().await.unwrap_or_default();
-        bail!("HTTP {status}: {}", detail.chars().take(400).collect::<String>());
+        bail!(
+            "HTTP {status}: {}",
+            detail.chars().take(400).collect::<String>()
+        );
     }
 
     let mut stream = response.bytes_stream();
@@ -119,8 +132,12 @@ async fn stream(
         while let Some(newline) = buffer.find('\n') {
             let line: String = buffer.drain(..=newline).collect();
             let line = line.trim_end();
-            let Some(payload) = line.strip_prefix("data: ") else { continue };
-            let Ok(event) = serde_json::from_str::<serde_json::Value>(payload) else { continue };
+            let Some(payload) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            let Ok(event) = serde_json::from_str::<serde_json::Value>(payload) else {
+                continue;
+            };
 
             match event.get("type").and_then(|v| v.as_str()) {
                 Some("content_block_delta") => {
@@ -137,7 +154,10 @@ async fn stream(
                 }
                 Some("message_delta") => {
                     // stop_details is populated only on a refusal, so guard first.
-                    if event.get("delta").and_then(|d| d.get("stop_reason")).and_then(|s| s.as_str())
+                    if event
+                        .get("delta")
+                        .and_then(|d| d.get("stop_reason"))
+                        .and_then(|s| s.as_str())
                         == Some("refusal")
                     {
                         let category = event

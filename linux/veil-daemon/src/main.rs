@@ -26,21 +26,26 @@ async fn main() -> Result<()> {
 
     let connection = zbus::connection::Builder::session()?
         .name("dev.veil.Daemon")?
-        .serve_at("/dev/veil/Daemon", dbus::Daemon { version: "0.1.0".into() })?
+        .serve_at(
+            "/dev/veil/Daemon",
+            dbus::Daemon {
+                version: "0.1.0".into(),
+            },
+        )?
         .build()
         .await
         .context("could not take the D-Bus name; is another daemon running?")?;
     let emitter = zbus::object_server::SignalEmitter::new(&connection, "/dev/veil/Daemon")?;
 
     // Capture. Far end first, because that is the one that matters.
-    let far_target = config
-        .far_target
-        .clone()
-        .or_else(audio::default_monitor);
-    tracing::info!("far-end target: {}", far_target.as_deref().unwrap_or("(default)"));
+    let far_target = config.far_target.clone().or_else(audio::default_monitor);
+    tracing::info!(
+        "far-end target: {}",
+        far_target.as_deref().unwrap_or("(default)")
+    );
 
-    let (_far_capture, far_audio) = audio::Capture::start(far_target.as_deref(), "far-end")?;
-    let (_near_capture, near_audio) =
+    let (far_capture, far_audio) = audio::Capture::start(far_target.as_deref(), "far-end")?;
+    let (near_capture, near_audio) =
         audio::Capture::start(config.near_target.as_deref(), "near-end")?;
 
     let Some(deepgram_key) = config.deepgram_api_key.clone() else {
@@ -62,7 +67,12 @@ async fn main() -> Result<()> {
     );
 
     let answerer = config.anthropic_api_key.clone().map(|key| {
-        Claude::new(key, config.model.clone(), config.persona.clone(), config.user_context())
+        Claude::new(
+            key,
+            config.model.clone(),
+            config.persona.clone(),
+            config.user_context(),
+        )
     });
     if answerer.is_none() {
         tracing::warn!("ANTHROPIC_API_KEY is not set; transcribing only");
@@ -126,5 +136,7 @@ async fn main() -> Result<()> {
         }
     }
 
+    far_capture.stop().await;
+    near_capture.stop().await;
     Ok(())
 }

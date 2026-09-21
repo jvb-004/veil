@@ -47,7 +47,7 @@ impl Deepgram {
                 tokio::select! {
                     chunk = audio_rx.recv() => match chunk {
                         Some(bytes) => {
-                            if write.send(Message::Binary(bytes.into())).await.is_err() { break; }
+                            if write.send(Message::Binary(bytes)).await.is_err() { break; }
                         }
                         None => {
                             let _ = write.send(Message::Text(
@@ -81,12 +81,15 @@ impl Deepgram {
 async fn connect(
     url: &str,
     api_key: &str,
-) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>>
-{
+) -> Result<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+> {
     let mut request = url.into_client_request().context("bad deepgram url")?;
     request.headers_mut().insert(
         "Authorization",
-        format!("Token {api_key}").parse().context("bad api key header")?,
+        format!("Token {api_key}")
+            .parse()
+            .context("bad api key header")?,
     );
     let (socket, _) = tokio_tungstenite::connect_async(request)
         .await
@@ -108,7 +111,17 @@ fn parse(raw: &str, speaker: Speaker) -> Option<Segment> {
     if text.is_empty() {
         return None;
     }
-    let is_final = value.get("is_final").and_then(|v| v.as_bool()).unwrap_or(false)
-        || value.get("speech_final").and_then(|v| v.as_bool()).unwrap_or(false);
-    Some(Segment { speaker, text: text.to_string(), is_final })
+    let is_final = value
+        .get("is_final")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || value
+            .get("speech_final")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    Some(Segment {
+        speaker,
+        text: text.to_string(),
+        is_final,
+    })
 }
