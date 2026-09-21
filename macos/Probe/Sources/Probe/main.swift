@@ -1,27 +1,49 @@
-//  veil macOS capture-exclusion probe
+//  veil macOS capture-exclusion probe, v2
 //
-//  Purpose: settle, empirically and per OS build, what a screen-share actually
-//  sees of a window that asks not to be seen. Prints a JSON report.
+//  v1 was wrong in one important way. Its "discriminator" captured our own
+//  window with CGWindowListCreateImage to decide whether the window was still
+//  rendering. But that call is itself gated by the window's sharing state, so
+//  a window excluded from capture and a window that never rendered look
+//  identical through it. v1 could not tell them apart and said so with
+//  unearned confidence.
 //
-//  Method: put a borderless window filled with pure magenta on screen, then try
-//  to photograph the screen four different ways and count magenta pixels.
-//  Run the whole battery twice: once with sharingType = .readOnly (the control,
-//  where the window MUST show up) and once with .none (the claim under test).
+//  v2 measures the thing that is NOT sharing-gated: window metadata. A window
+//  with a live backing store reports kCGWindowMemoryUsage, kCGWindowIsOnscreen
+//  and an alpha. Those are answers from WindowServer's bookkeeping, not from
+//  its pixel pipeline, so they survive the sharing gate.
 //
-//  The per-window capture (D) is the discriminator that matters: if the window
-//  is missing from a full-screen capture but present in its own window capture,
-//  it was excluded. If it is missing from both, it simply never rendered, which
-//  is the macOS 26 failure mode and is not stealth, it is a broken window.
+//  v2 also adds the test that actually matters. A one-shot screenshot is not
+//  what Zoom does. Zoom opens an SCStream and keeps it open, and Apple forum
+//  thread 808016 reports that excluded windows reappear in a long-running
+//  stream once its content filter is touched. So we run a real stream for
+//  several seconds and toggle its filter mid-flight.
+//
+//  Two windows are on screen the whole time: a magenta one under test and a
+//  cyan one that always stays shareable. If a capture shows cyan and not
+//  magenta, the capture worked and only the test window was removed. That is
+//  an in-frame control, which beats trusting a separate run.
 
 import AppKit
 import CoreAudio
 import CoreGraphics
+import CoreMedia
+import CoreVideo
 import Foundation
 import ScreenCaptureKit
 
-// MARK: - helpers
+// MARK: - small utilities
 
-let markerColor = NSColor(srgbRed: 1, green: 0, blue: 1, alpha: 1)
+/// Swift 6 concurrency checking rejects mutating a captured var from a Task.
+/// A reference box is the boring, portable fix across toolchains.
+final class Box<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: T
+    init(_ value: T) { _value = value }
+    var value: T {
+        get { lock.lock(); defer { lock.unlock() }; return _value }
+        set { lock.lock(); _value = newValue; lock.unlock() }
+    }
+}
 
 func pump(_ seconds: Double) {
     let end = Date().addingTimeInterval(seconds)
@@ -30,205 +52,311 @@ func pump(_ seconds: Double) {
     }
 }
 
-/// Await an async call from the main thread while keeping the AppKit runloop alive.
-func syncAwait<T>(_ op: @escaping () async throws -> T) -> Result<T, Error> {
-    var out: Result<T, Error>?
+/// Await async work from the main thread while keeping the AppKit runloop alive.
+func syncAwait<T>(timeout: Double = 30, _ op: @escaping () async throws -> T) -> Result<T, Error> {
+    let box = Box<Result<T, Error>?>(nil)
     let sem = DispatchSemaphore(value: 0)
     Task.detached {
-        do { out = .success(try await op()) } catch { out = .failure(error) }
+        do { box.value = .success(try await op()) } catch { box.value = .failure(error) }
         sem.signal()
     }
+    let deadline = Date().addingTimeInterval(timeout)
     while sem.wait(timeout: .now() + 0.02) == .timedOut {
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        if Date() > deadline { return .failure(ProbeError.timeout) }
     }
-    return out ?? .failure(ProbeError.timeout)
+    return box.value ?? .failure(ProbeError.timeout)
 }
 
 enum ProbeError: Error, CustomStringConvertible {
     case noDisplay, timeout, nilImage
     var description: String {
         switch self {
-        case .noDisplay: return "no display returned by SCShareableContent"
-        case .timeout:   return "probe timed out"
-        case .nilImage:  return "capture returned nil (usually TCC denial)"
+        case .noDisplay: return "no display from SCShareableContent"
+        case .timeout:   return "timed out"
+        case .nilImage:  return "capture returned nil"
         }
     }
 }
 
-/// Count pixels close to pure magenta. Negative means the image was unreadable.
-func markerPixels(_ image: CGImage?) -> Int {
-    guard let image else { return -1 }
+// MARK: - pixel counting
+
+struct MarkerCount { var magenta = 0; var cyan = 0 }
+
+func countMarkers(_ image: CGImage?) -> MarkerCount {
+    guard let image, image.width > 0, image.height > 0 else { return MarkerCount(magenta: -1, cyan: -1) }
     let w = image.width, h = image.height
-    guard w > 0, h > 0 else { return -1 }
     let bytesPerRow = w * 4
     let total = h * bytesPerRow
-    guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return -1 }
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return MarkerCount(magenta: -1, cyan: -1) }
     let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: total)
     buf.initialize(repeating: 0, count: total)
     defer { buf.deallocate() }
     guard let ctx = CGContext(data: buf, width: w, height: h, bitsPerComponent: 8,
                               bytesPerRow: bytesPerRow, space: space,
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-    else { return -1 }
+    else { return MarkerCount(magenta: -1, cyan: -1) }
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
-    var count = 0
+    var out = MarkerCount()
     for i in stride(from: 0, to: total, by: 4) {
-        if buf[i] > 220, buf[i + 1] < 50, buf[i + 2] > 220 { count += 1 }
+        let r = buf[i], g = buf[i + 1], b = buf[i + 2]
+        if r > 220, g < 50, b > 220 { out.magenta += 1 }
+        else if r < 50, g > 220, b > 220 { out.cyan += 1 }
     }
-    return count
+    return out
+}
+
+/// Same, straight off a CVPixelBuffer in BGRA, for stream frames.
+func countMarkers(pixelBuffer pb: CVPixelBuffer) -> MarkerCount {
+    CVPixelBufferLockBaseAddress(pb, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(pb) else { return MarkerCount(magenta: -1, cyan: -1) }
+    let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+    let stride = CVPixelBufferGetBytesPerRow(pb)
+    let p = base.assumingMemoryBound(to: UInt8.self)
+    var out = MarkerCount()
+    for y in 0..<h {
+        let row = p + y * stride
+        for x in 0..<w {
+            let b = row[x * 4], g = row[x * 4 + 1], r = row[x * 4 + 2]
+            if r > 220, g < 50, b > 220 { out.magenta += 1 }
+            else if r < 50, g > 220, b > 220 { out.cyan += 1 }
+        }
+    }
+    return out
 }
 
 // MARK: - capture paths
 
-/// A: modern path. This is what Zoom, Teams, Chrome getDisplayMedia and QuickTime use.
-func captureScreenCaptureKit() -> (pixels: Int, error: String?, listed: Bool?, winPID: pid_t) {
+func captureSCKOneShot() -> (markers: MarkerCount, error: String?, listed: Bool) {
     let pid = ProcessInfo.processInfo.processIdentifier
     let result = syncAwait { () async throws -> (CGImage, Bool) in
-        let content = try await SCShareableContent.excludingDesktopWindows(false,
-                                                                          onScreenWindowsOnly: true)
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else { throw ProbeError.noDisplay }
-        // Is our own window even offered to a capturer that enumerates windows?
         let listed = content.windows.contains { $0.owningApplication?.processID == pid }
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let cfg = SCStreamConfiguration()
         cfg.width = display.width
         cfg.height = display.height
         cfg.showsCursor = false
-        let img = try await SCScreenshotManager.captureImage(contentFilter: filter,
-                                                             configuration: cfg)
-        return (img, listed)
+        return (try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg), listed)
     }
     switch result {
-    case .success(let (img, listed)): return (markerPixels(img), nil, listed, pid)
-    case .failure(let e):             return (-1, "\(e)", nil, pid)
+    case .success(let (img, listed)): return (countMarkers(img), nil, listed)
+    case .failure(let e):             return (MarkerCount(magenta: -1, cyan: -1), "\(e)", false)
     }
 }
 
-/// B: legacy CoreGraphics path. Deprecated, still used by older capture code.
-func captureCGWindowList() -> Int {
-    let img = CGWindowListCreateImage(.infinite, [.optionOnScreenOnly],
-                                      kCGNullWindowID, [.bestResolution])
-    return markerPixels(img)
+func captureCGDisplay() -> MarkerCount {
+    countMarkers(CGWindowListCreateImage(.infinite, [.optionOnScreenOnly], kCGNullWindowID, [.bestResolution]))
 }
 
-/// C: the screencapture CLI, i.e. what a user pressing Cmd-Shift-3 gets.
-func captureCLI() -> Int {
-    let path = NSTemporaryDirectory() + "veil-probe-\(UUID().uuidString).png"
+func captureCLI() -> MarkerCount {
+    let path = NSTemporaryDirectory() + "veil-\(UUID().uuidString).png"
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     p.arguments = ["-x", "-t", "png", path]
-    do { try p.run(); p.waitUntilExit() } catch { return -1 }
+    do { try p.run(); p.waitUntilExit() } catch { return MarkerCount(magenta: -1, cyan: -1) }
+    defer { try? FileManager.default.removeItem(atPath: path) }
     guard p.terminationStatus == 0,
           let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
-    else { return -1 }
-    try? FileManager.default.removeItem(atPath: path)
-    return markerPixels(img)
+    else { return MarkerCount(magenta: -1, cyan: -1) }
+    return countMarkers(img)
 }
 
-/// D: the discriminator. Capture OUR window by id, straight from WindowServer.
-/// Marker present here but absent from A/B/C means genuine capture exclusion.
-/// Marker absent here too means the window is not rendering at all.
-func captureOwnWindow(_ window: NSWindow) -> Int {
-    let wid = CGWindowID(window.windowNumber)
-    let img = CGWindowListCreateImage(.null, [.optionIncludingWindow], wid,
-                                      [.boundsIgnoreFraming, .bestResolution])
-    return markerPixels(img)
-}
+// MARK: - the test that matters: a long-lived SCStream with a filter toggle
 
-// MARK: - battery
+final class StreamCollector: NSObject, SCStreamOutput, SCStreamDelegate {
+    let frames = Box<[[String: Int]]>([])
+    let errors = Box<[String]>([])
+    private let started = Date()
 
-struct Battery {
-    var sharingType: String
-    var screenCaptureKit: Int
-    var screenCaptureKitError: String?
-    var listedInShareableContent: Bool?
-    var cgWindowListDisplay: Int
-    var screencaptureCLI: Int
-    var ownWindowBackingStore: Int
+    func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen, CMSampleBufferIsValid(sb),
+              let pb = CMSampleBufferGetImageBuffer(sb) else { return }
+        let m = countMarkers(pixelBuffer: pb)
+        var f = frames.value
+        f.append(["ms": Int(Date().timeIntervalSince(started) * 1000),
+                  "magenta": m.magenta, "cyan": m.cyan])
+        frames.value = f
+    }
 
-    var dict: [String: Any] {
-        var d: [String: Any] = [
-            "sharing_type": sharingType,
-            "A_screencapturekit_display": screenCaptureKit,
-            "B_cgwindowlist_display": cgWindowListDisplay,
-            "C_screencapture_cli": screencaptureCLI,
-            "D_own_window_backing_store": ownWindowBackingStore,
-        ]
-        if let e = screenCaptureKitError { d["A_error"] = e }
-        if let l = listedInShareableContent { d["A_listed_in_shareable_content"] = l }
-        return d
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        var e = errors.value; e.append("\(error)"); errors.value = e
     }
 }
 
-func runBattery(on window: NSWindow, sharing: NSWindow.SharingType, label: String) -> Battery {
-    window.sharingType = sharing
-    window.orderFrontRegardless()
-    CATransaction.flush()
-    pump(1.2)
+/// Run a stream for ~5s, toggling the content filter halfway, and report the
+/// magenta count over time. This is the shape of a real conferencing capture.
+func captureSCKStream() -> [String: Any] {
+    let collector = StreamCollector()
+    let result = syncAwait(timeout: 40) { () async throws -> Bool in
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else { throw ProbeError.noDisplay }
 
-    let a = captureScreenCaptureKit()
-    let b = captureCGWindowList()
-    let c = captureCLI()
-    let d = captureOwnWindow(window)
+        let filterA = SCContentFilter(display: display, excludingWindows: [])
+        let filterB = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
 
-    return Battery(sharingType: label,
-                   screenCaptureKit: a.pixels,
-                   screenCaptureKitError: a.error,
-                   listedInShareableContent: a.listed,
-                   cgWindowListDisplay: b,
-                   screencaptureCLI: c,
-                   ownWindowBackingStore: d)
-}
+        let cfg = SCStreamConfiguration()
+        cfg.width = display.width
+        cfg.height = display.height
+        cfg.showsCursor = false
+        cfg.pixelFormat = kCVPixelFormatType_32BGRA
+        cfg.minimumFrameInterval = CMTime(value: 1, timescale: 4)   // 4 fps is plenty
+        cfg.queueDepth = 5
 
-// MARK: - audio probe (Core Audio process taps, macOS 14.4+)
-
-func probeAudioTaps() -> [String: Any] {
-    var out: [String: Any] = [:]
-
-    var addr = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain)
-    var devID = AudioDeviceID(0)
-    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-    let devStatus = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject),
-                                               &addr, 0, nil, &size, &devID)
-    out["default_output_device_status"] = Int(devStatus)
-    out["default_output_device_id"] = Int(devID)
-    out["has_default_output"] = (devStatus == noErr && devID != 0)
-
-    if #available(macOS 14.4, *) {
-        let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        desc.name = "veil-probe-tap"
-        var tapID = AudioObjectID(kAudioObjectUnknown)
-        let status = AudioHardwareCreateProcessTap(desc, &tapID)
-        out["process_tap_status"] = Int(status)
-        out["process_tap_created"] = (status == noErr)
-        out["process_tap_id"] = Int(tapID)
-        if status == noErr { AudioHardwareDestroyProcessTap(tapID) }
-    } else {
-        out["process_tap_status"] = "unavailable_below_14_4"
+        let stream = SCStream(filter: filterA, configuration: cfg, delegate: collector)
+        try stream.addStreamOutput(collector, type: .screen,
+                                   sampleHandlerQueue: DispatchQueue(label: "veil.stream"))
+        try await stream.startCapture()
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        // The manoeuvre from Apple forum thread 808016: touch the filter.
+        try await stream.updateContentFilter(filterB)
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        try await stream.stopCapture()
+        return true
     }
+
+    var out: [String: Any] = ["frames": collector.frames.value,
+                              "stream_errors": collector.errors.value,
+                              "filter_toggle_at_ms": 2500]
+    if case .failure(let e) = result { out["error"] = "\(e)" }
+    let magentas = collector.frames.value.compactMap { $0["magenta"] }
+    out["frames_with_magenta"] = magentas.filter { $0 > 0 }.count
+    out["frame_count"] = magentas.count
+    out["magenta_before_toggle"] = collector.frames.value
+        .filter { ($0["ms"] ?? 0) < 2500 }.compactMap { $0["magenta"] }.max() ?? 0
+    out["magenta_after_toggle"] = collector.frames.value
+        .filter { ($0["ms"] ?? 0) >= 2500 }.compactMap { $0["magenta"] }.max() ?? 0
     return out
 }
 
-// MARK: - main
+// MARK: - the non-sharing-gated evidence: WindowServer bookkeeping
+
+func windowMetadata(_ window: NSWindow) -> [String: Any] {
+    let wid = CGWindowID(window.windowNumber)
+    guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], wid) as? [[String: Any]],
+          let info = list.first
+    else { return ["found": false] }
+    return [
+        "found": true,
+        "is_onscreen": (info[kCGWindowIsOnscreen as String] as? Bool) ?? false,
+        "alpha": (info[kCGWindowAlpha as String] as? Double) ?? -1,
+        "sharing_state": (info[kCGWindowSharingState as String] as? Int) ?? -1,
+        "memory_usage": (info[kCGWindowMemoryUsage as String] as? Int) ?? -1,
+        "store_type": (info[kCGWindowStoreType as String] as? Int) ?? -1,
+        "layer": (info[kCGWindowLayer as String] as? Int) ?? -1,
+    ]
+}
+
+/// Does the app side still draw? This reads the view's own drawing, never
+/// WindowServer, so it is unaffected by sharing state.
+func viewStillDraws(_ window: NSWindow) -> Int {
+    guard let view = window.contentView,
+          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+    else { return -1 }
+    view.cacheDisplay(in: view.bounds, to: rep)
+    return countMarkers(rep.cgImage).magenta
+}
+
+// MARK: - windows
+
+func makeWindow(color: NSColor, x: CGFloat) -> NSWindow {
+    let w = NSWindow(contentRect: NSRect(x: x, y: 80, width: 420, height: 300),
+                     styleMask: [.borderless], backing: .buffered, defer: false)
+    w.level = .screenSaver
+    w.backgroundColor = color
+    w.isOpaque = true
+    w.hasShadow = false
+    w.ignoresMouseEvents = true
+    w.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+    w.orderFrontRegardless()
+    return w
+}
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
-let screenFrame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1024, height: 768)
-let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 420, height: 300),
-                      styleMask: [.borderless], backing: .buffered, defer: false)
-window.level = .screenSaver
-window.backgroundColor = markerColor
-window.isOpaque = true
-window.hasShadow = false
-window.ignoresMouseEvents = true
-window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-window.orderFrontRegardless()
-pump(0.8)
+let testWindow = makeWindow(color: NSColor(srgbRed: 1, green: 0, blue: 1, alpha: 1), x: 80)
+let ctrlWindow = makeWindow(color: NSColor(srgbRed: 0, green: 1, blue: 1, alpha: 1), x: 540)
+ctrlWindow.sharingType = .readOnly
+CATransaction.flush()
+pump(1.0)
+
+func phase(_ label: String, sharing: NSWindow.SharingType) -> [String: Any] {
+    testWindow.sharingType = sharing
+    testWindow.orderFrontRegardless()
+    ctrlWindow.orderFrontRegardless()
+    CATransaction.flush()
+    pump(1.2)
+
+    let oneShot = captureSCKOneShot()
+    let cg = captureCGDisplay()
+    let cli = captureCLI()
+
+    return [
+        "label": label,
+        "A_sck_oneshot": ["magenta": oneShot.markers.magenta, "cyan": oneShot.markers.cyan],
+        "A_error": oneShot.error as Any,
+        "A_listed_in_shareable_content": oneShot.listed,
+        "B_cgwindowlist_display": ["magenta": cg.magenta, "cyan": cg.cyan],
+        "C_screencapture_cli": ["magenta": cli.magenta, "cyan": cli.cyan],
+        "D_stream": captureSCKStream(),
+        "E_test_window_metadata": windowMetadata(testWindow),
+        "E_control_window_metadata": windowMetadata(ctrlWindow),
+        "F_view_still_draws_magenta_px": viewStillDraws(testWindow),
+    ]
+}
+
+let control = phase("sharingType = .readOnly (control)", sharing: .readOnly)
+let test    = phase("sharingType = .none (under test)", sharing: .none)
+
+// MARK: - verdict
+
+func magenta(_ p: [String: Any], _ key: String) -> Int {
+    ((p[key] as? [String: Int])?["magenta"]) ?? -1
+}
+func cyan(_ p: [String: Any], _ key: String) -> Int {
+    ((p[key] as? [String: Int])?["cyan"]) ?? -1
+}
+
+var verdict: String
+var notes: [String] = []
+
+let ctrlOK = magenta(control, "A_sck_oneshot") > 0 && magenta(control, "B_cgwindowlist_display") > 0
+let cyanStillVisible = cyan(test, "A_sck_oneshot") > 0
+let testMeta = test["E_test_window_metadata"] as? [String: Any] ?? [:]
+let ctrlMeta = control["E_test_window_metadata"] as? [String: Any] ?? [:]
+let testMem = (testMeta["memory_usage"] as? Int) ?? -1
+let ctrlMem = (ctrlMeta["memory_usage"] as? Int) ?? -1
+let stillOnscreen = (testMeta["is_onscreen"] as? Bool) ?? false
+let drawsInTest = test["F_view_still_draws_magenta_px"] as? Int ?? -1
+let streamAfter = (test["D_stream"] as? [String: Any])?["magenta_after_toggle"] as? Int ?? -1
+let streamBefore = (test["D_stream"] as? [String: Any])?["magenta_before_toggle"] as? Int ?? -1
+
+if !ctrlOK {
+    verdict = "INVALID: the control run saw nothing, so capture permission or the display is missing"
+} else if !cyanStillVisible {
+    verdict = "INVALID: the always-shareable control window vanished too, capture broke mid-run"
+} else if magenta(test, "A_sck_oneshot") > 0 {
+    verdict = "NOT_EXCLUDED: sharingType = .none does nothing against ScreenCaptureKit on this build"
+} else {
+    // Magenta is gone from captures while cyan remains. Now the real question:
+    // excluded, or simply not rendering any more?
+    let backingAlive = testMem > 0 && Double(testMem) > Double(ctrlMem) * 0.5
+    if stillOnscreen && backingAlive && drawsInTest > 0 {
+        verdict = "EXCLUDED: window still onscreen with a live backing store, but absent from every capture path"
+    } else if !stillOnscreen || (testMem <= 0 && ctrlMem > 0) {
+        verdict = "WINDOW_STOPPED_RENDERING: the window left the screen, which is a bug and not stealth"
+    } else {
+        verdict = "AMBIGUOUS: absent from captures, but the rendering evidence is not conclusive"
+        notes.append("onscreen=\(stillOnscreen) mem=\(testMem) vs control \(ctrlMem) viewDraws=\(drawsInTest)")
+    }
+    if streamAfter > 0 && streamBefore <= 0 {
+        verdict += " | STREAM_LEAK: the window reappeared after the content filter was toggled"
+    }
+}
 
 #if arch(arm64)
 let archString = "arm64"
@@ -237,51 +365,49 @@ let archString = "x86_64"
 #endif
 
 let v = ProcessInfo.processInfo.operatingSystemVersion
-let osString = "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
-// The cliff: ScreenCaptureKit is reported to stop honouring sharingType at 15.4.
-let pastCliff = (v.majorVersion > 15) || (v.majorVersion == 15 && v.minorVersion >= 4)
+let screenFrame = NSScreen.main?.frame ?? .zero
 
-let control = runBattery(on: window, sharing: .readOnly, label: "readOnly (control)")
-let test    = runBattery(on: window, sharing: .none,     label: "none (under test)")
-
-var verdict = "INCONCLUSIVE"
-if control.screenCaptureKit <= 0 && control.cgWindowListDisplay <= 0 && control.screencaptureCLI <= 0 {
-    verdict = "NO_CAPTURE_PERMISSION_OR_NO_DISPLAY: control run saw nothing, results meaningless"
-} else if test.ownWindowBackingStore <= 0 && control.ownWindowBackingStore > 0 {
-    verdict = "WINDOW_STOPPED_RENDERING: sharingType=.none broke the window (macOS 26 failure mode)"
-} else {
-    let excludedFromSCK = control.screenCaptureKit > 0 && test.screenCaptureKit <= 0
-    let excludedFromCG  = control.cgWindowListDisplay > 0 && test.cgWindowListDisplay <= 0
-    let excludedFromCLI = control.screencaptureCLI > 0 && test.screencaptureCLI <= 0
-    if excludedFromSCK && excludedFromCG && excludedFromCLI {
-        verdict = "FULLY_EXCLUDED: sharingType=.none still hides the window from every path"
-    } else if !excludedFromSCK && excludedFromCG {
-        verdict = "LEGACY_ONLY: hidden from CoreGraphics, VISIBLE to ScreenCaptureKit (so visible in Zoom/Meet/Teams)"
-    } else if !excludedFromSCK && !excludedFromCG {
-        verdict = "NOT_EXCLUDED: sharingType=.none does nothing on this build"
+func probeAudioTaps() -> [String: Any] {
+    var out: [String: Any] = [:]
+    var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                                          mScope: kAudioObjectPropertyScopeGlobal,
+                                          mElement: kAudioObjectPropertyElementMain)
+    var devID = AudioDeviceID(0)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    let st = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &devID)
+    out["default_output_status"] = Int(st)
+    out["has_default_output"] = (st == noErr && devID != 0)
+    if #available(macOS 14.4, *) {
+        let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        desc.name = "veil-probe-tap"
+        var tapID = AudioObjectID(kAudioObjectUnknown)
+        let s = AudioHardwareCreateProcessTap(desc, &tapID)
+        out["process_tap_status"] = Int(s)
+        out["process_tap_created"] = (s == noErr)
+        if s == noErr { AudioHardwareDestroyProcessTap(tapID) }
     } else {
-        verdict = "MIXED: see per-path numbers"
+        out["process_tap_created"] = false
+        out["process_tap_status"] = "below_14_4"
     }
+    return out
 }
 
 let report: [String: Any] = [
-    "os_version": osString,
-    "past_15_4_cliff": pastCliff,
+    "probe_version": 2,
+    "os_version": "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)",
+    "past_15_4_cliff": (v.majorVersion > 15) || (v.majorVersion == 15 && v.minorVersion >= 4),
     "arch": archString,
     "screen": ["width": Int(screenFrame.width), "height": Int(screenFrame.height)],
-    "window_number": window.windowNumber,
-    "control": control.dict,
-    "test": test.dict,
+    "control": control,
+    "test": test,
     "audio": probeAudioTaps(),
+    "notes": notes,
     "verdict": verdict,
 ]
 
-let data = try! JSONSerialization.data(withJSONObject: report,
-                                       options: [.prettyPrinted, .sortedKeys])
+let data = try! JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
 let json = String(data: data, encoding: .utf8)!
 print(json)
-
 let outPath = ProcessInfo.processInfo.environment["VEIL_PROBE_OUT"] ?? "probe-report.json"
 try? json.write(toFile: outPath, atomically: true, encoding: .utf8)
-
 FileHandle.standardError.write("verdict: \(verdict)\n".data(using: .utf8)!)
