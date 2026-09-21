@@ -16,13 +16,14 @@ on:
 
 jobs:
   probe:
-    name: probe ${{ matrix.runner }}
+    name: probe ${{ matrix.runner }} #${{ matrix.attempt }}
     runs-on: ${{ matrix.runner }}
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         runner: [macos-14, macos-15, macos-26]
+        attempt: [1, 2, 3]
 
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +59,7 @@ jobs:
       - name: Run probe
         working-directory: macos/Probe
         env:
-          VEIL_PROBE_OUT: ${{ github.workspace }}/probe-${{ matrix.runner }}.json
+          VEIL_PROBE_OUT: ${{ github.workspace }}/probe-${{ matrix.runner }}-${{ matrix.attempt }}.json
         run: |
           set -o pipefail
           ./.build/release/Probe | tee "$VEIL_PROBE_OUT.stdout"
@@ -66,9 +67,9 @@ jobs:
       - name: Summarise
         if: always()
         run: |
-          F="${{ github.workspace }}/probe-${{ matrix.runner }}.json"
+          F="${{ github.workspace }}/probe-${{ matrix.runner }}-${{ matrix.attempt }}.json"
           {
-            echo "## ${{ matrix.runner }}"
+            echo "## ${{ matrix.runner }} attempt ${{ matrix.attempt }}"
             if [ -s "$F" ]; then
               echo ""
               echo "**verdict:** \`$(jq -r .verdict "$F")\`  "
@@ -99,7 +100,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: probe-${{ matrix.runner }}
+          name: probe-${{ matrix.runner }}-${{ matrix.attempt }}
           path: |
             probe-*.json
             probe-*.json.stdout

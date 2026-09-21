@@ -189,7 +189,33 @@ final class StreamCollector: NSObject, SCStreamOutput, SCStreamDelegate {
 
 /// Run a stream for ~5s, toggling the content filter halfway, and report the
 /// magenta count over time. This is the shape of a real conferencing capture.
+var jitterWindow: NSWindow?
+
+func startJitter() -> Timer {
+    if jitterWindow == nil {
+        let w = NSWindow(contentRect: NSRect(x: 20, y: 600, width: 30, height: 30),
+                         styleMask: [.borderless], backing: .buffered, defer: false)
+        w.level = .screenSaver
+        w.backgroundColor = .white
+        w.isOpaque = true
+        w.hasShadow = false
+        w.ignoresMouseEvents = true
+        w.sharingType = .readOnly
+        w.orderFrontRegardless()
+        jitterWindow = w
+    }
+    var flip = false
+    let t = Timer(timeInterval: 0.1, repeats: true) { _ in
+        flip.toggle()
+        jitterWindow?.setFrameOrigin(NSPoint(x: flip ? 20 : 21, y: 600))
+    }
+    RunLoop.main.add(t, forMode: .common)
+    return t
+}
+
 func captureSCKStream() -> [String: Any] {
+    let jitter = startJitter()
+    defer { jitter.invalidate() }
     let collector = StreamCollector()
     let result = syncAwait(timeout: 60) { () async throws -> Bool in
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
