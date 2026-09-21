@@ -142,3 +142,46 @@ DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=... linux/target/release/veil-daemon
 Swift side reduced to a UI shim, rather than two copies of the trigger
 heuristics drifting apart. Until that lands, changes to one need mirroring in
 the other.
+
+## Windows
+
+The one platform where the stealth claim is strong, and now the one with the
+cleanest evidence behind it.
+
+`SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)` is enforced inside
+DWM, before any capture path is handed a pixel. No per-application allowlist to
+chase and no version cliff to test around, unlike macOS.
+
+Measured by `windows/probe`, on `windows-2022` and `windows-latest`. A
+protected magenta window and an unprotected cyan control are on screen at the
+same time, and each capture path carries its own control so that a path which
+captured nothing cannot be mistaken for a path that captured an exclusion:
+
+| path | protected (magenta) | control (cyan) |
+|---|---|---|
+| A BitBlt from the screen DC | 0 | 126000 |
+| B PrintWindow, RENDERFULLCONTENT | 0 | 126000 |
+
+Verdict on both runners: `EXCLUDED`. The OS confirms `WDA_EXCLUDEFROMCAPTURE`
+on one window and `WDA_NONE` on the other, read back rather than assumed.
+
+### What is still not proven
+
+DXGI Desktop Duplication and Windows.Graphics.Capture are the paths Zoom,
+Teams and Chrome actually use, and neither is tested yet. The DWM-level
+argument says exclusion applies uniformly to all of them, which is very
+probably true, but taking that on trust is exactly what this probe exists to
+replace. Those are the next two paths to add.
+
+The same `GetWindowDisplayAffinity` call used here to verify the flag is also
+how a determined proctor would detect the overlay. Worth saying plainly.
+
+### Audio
+
+WASAPI loopback off the default render endpoint, asking the endpoint for
+16 kHz mono s16 so WASAPI's own converter does the work. The honest gap versus
+macOS: this is endpoint loopback, not per-process, so it hears everything the
+machine plays rather than the call alone. macOS taps by PID. That difference
+turns into a real bug the day text to speech is added and the assistant starts
+transcribing its own voice; the fix is `ActivateAudioInterfaceAsync` with
+`AUDIOCLIENT_ACTIVATION_PARAMS`.
