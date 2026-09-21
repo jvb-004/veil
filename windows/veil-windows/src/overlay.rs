@@ -162,11 +162,11 @@ unsafe extern "system" fn window_proc(
                 0,
                 0,
                 0,
-                DEFAULT_CHARSET,
+                DEFAULT_CHARSET as u32,
                 0,
                 0,
-                CLEARTYPE_QUALITY,
-                FF_DONTCARE,
+                CLEARTYPE_QUALITY as u32,
+                FF_DONTCARE as u32,
                 face.as_ptr() as PCWSTR,
             );
             let previous = SelectObject(hdc, font as *mut c_void);

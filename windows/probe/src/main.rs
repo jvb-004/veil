@@ -32,6 +32,7 @@ mod windows_probe {
         DeleteObject, GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
         BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC, SRCCOPY,
     };
+    use windows_sys::Win32::Storage::Xps::PrintWindow;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetDesktopWindow, GetSystemMetrics,
@@ -140,7 +141,7 @@ mod windows_probe {
             biHeight: -height, // top-down
             biPlanes: 1,
             biBitCount: 32,
-            biCompression: BI_RGB.0,
+            biCompression: BI_RGB,
             biSizeImage: 0,
             biXPelsPerMeter: 0,
             biYPelsPerMeter: 0,
