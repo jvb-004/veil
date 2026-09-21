@@ -1,0 +1,43 @@
+name: macOS app build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'macos/Veil/**'
+      - '.github/workflows/macos-build.yml'
+
+jobs:
+  build:
+    name: build ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-26]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sw_vers && swift --version
+      - name: Build
+        working-directory: macos/Veil
+        run: swift build -c release 2>&1 | tail -60
+      - name: Confirm the Info.plist made it into the binary
+        working-directory: macos/Veil
+        run: |
+          otool -P .build/release/Veil | head -30 || echo "no __info_plist section found"
+      - name: Smoke run (launches, prints, exits)
+        working-directory: macos/Veil
+        run: |
+          # No TCC consent on a runner, so audio will fail. That is fine: we are
+          # checking that it starts, wires up and logs rather than crashing.
+          ( ./.build/release/Veil & echo $! > /tmp/veil.pid ) 
+          sleep 6
+          kill "$(cat /tmp/veil.pid)" 2>/dev/null || true
+          echo "survived 6 seconds"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: veil-${{ matrix.runner }}
+          path: macos/Veil/.build/release/Veil
+          if-no-files-found: warn

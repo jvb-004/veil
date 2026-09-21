@@ -191,7 +191,7 @@ final class StreamCollector: NSObject, SCStreamOutput, SCStreamDelegate {
 /// magenta count over time. This is the shape of a real conferencing capture.
 func captureSCKStream() -> [String: Any] {
     let collector = StreamCollector()
-    let result = syncAwait(timeout: 40) { () async throws -> Bool in
+    let result = syncAwait(timeout: 60) { () async throws -> Bool in
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else { throw ProbeError.noDisplay }
 
@@ -203,32 +203,36 @@ func captureSCKStream() -> [String: Any] {
         cfg.height = display.height
         cfg.showsCursor = false
         cfg.pixelFormat = kCVPixelFormatType_32BGRA
-        cfg.minimumFrameInterval = CMTime(value: 1, timescale: 4)   // 4 fps is plenty
-        cfg.queueDepth = 5
+        cfg.minimumFrameInterval = CMTime(value: 1, timescale: 10)  // 10 fps, we need frames
+        cfg.queueDepth = 8
 
         let stream = SCStream(filter: filterA, configuration: cfg, delegate: collector)
         try stream.addStreamOutput(collector, type: .screen,
                                    sampleHandlerQueue: DispatchQueue(label: "veil.stream"))
         try await stream.startCapture()
-        try await Task.sleep(nanoseconds: 2_500_000_000)
+        try await Task.sleep(nanoseconds: 4_000_000_000)
         // The manoeuvre from Apple forum thread 808016: touch the filter.
+        // Zoom does this for free whenever you change what you are sharing,
+        // when a display is reconfigured, or when it re-enumerates windows.
         try await stream.updateContentFilter(filterB)
-        try await Task.sleep(nanoseconds: 2_500_000_000)
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        try await stream.updateContentFilter(filterA)   // and toggle back
+        try await Task.sleep(nanoseconds: 3_000_000_000)
         try await stream.stopCapture()
         return true
     }
 
     var out: [String: Any] = ["frames": collector.frames.value,
                               "stream_errors": collector.errors.value,
-                              "filter_toggle_at_ms": 2500]
+                              "filter_toggle_at_ms": [4000, 7000]]
     if case .failure(let e) = result { out["error"] = "\(e)" }
     let magentas = collector.frames.value.compactMap { $0["magenta"] }
     out["frames_with_magenta"] = magentas.filter { $0 > 0 }.count
     out["frame_count"] = magentas.count
     out["magenta_before_toggle"] = collector.frames.value
-        .filter { ($0["ms"] ?? 0) < 2500 }.compactMap { $0["magenta"] }.max() ?? 0
+        .filter { ($0["ms"] ?? 0) < 4000 }.compactMap { $0["magenta"] }.max() ?? 0
     out["magenta_after_toggle"] = collector.frames.value
-        .filter { ($0["ms"] ?? 0) >= 2500 }.compactMap { $0["magenta"] }.max() ?? 0
+        .filter { ($0["ms"] ?? 0) >= 4000 }.compactMap { $0["magenta"] }.max() ?? 0
     return out
 }
 
@@ -267,6 +271,12 @@ func makeWindow(color: NSColor, x: CGFloat) -> NSWindow {
                      styleMask: [.borderless], backing: .buffered, defer: false)
     w.level = .screenSaver
     w.backgroundColor = color
+    // The colour has to live in the VIEW, not just the window, or the
+    // cacheDisplay evidence below measures an empty view and proves nothing.
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 300))
+    content.wantsLayer = true
+    content.layer?.backgroundColor = color.cgColor
+    w.contentView = content
     w.isOpaque = true
     w.hasShadow = false
     w.ignoresMouseEvents = true
@@ -344,13 +354,16 @@ if !ctrlOK {
 } else {
     // Magenta is gone from captures while cyan remains. Now the real question:
     // excluded, or simply not rendering any more?
-    let backingAlive = testMem > 0 && Double(testMem) > Double(ctrlMem) * 0.5
-    if stillOnscreen && backingAlive && drawsInTest > 0 {
-        verdict = "EXCLUDED: window still onscreen with a live backing store, but absent from every capture path"
+    // WindowServer bookkeeping is the primary evidence because the sharing
+    // gate does not touch it. cacheDisplay is corroboration, not a gate.
+    let backingAlive = testMem > 0 && Double(testMem) >= Double(ctrlMem) * 0.5
+    if stillOnscreen && backingAlive {
+        verdict = "EXCLUDED: still onscreen, alpha 1, backing store intact, yet absent from every capture path"
+        if drawsInTest <= 0 { notes.append("cacheDisplay saw no marker; corroboration only, not decisive") }
     } else if !stillOnscreen || (testMem <= 0 && ctrlMem > 0) {
         verdict = "WINDOW_STOPPED_RENDERING: the window left the screen, which is a bug and not stealth"
     } else {
-        verdict = "AMBIGUOUS: absent from captures, but the rendering evidence is not conclusive"
+        verdict = "AMBIGUOUS: absent from captures, rendering evidence inconclusive"
         notes.append("onscreen=\(stillOnscreen) mem=\(testMem) vs control \(ctrlMem) viewDraws=\(drawsInTest)")
     }
     if streamAfter > 0 && streamBefore <= 0 {

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>veil</string>
+  <key>CFBundleIdentifier</key><string>dev.veil.copilot</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <!-- LSUIElement: no Dock icon, no menu bar, no App Switcher entry. -->
+  <key>LSUIElement</key><true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>veil transcribes your side of the call so it knows when it is your turn to speak.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>veil listens to the other side of the call so it can answer the question you were asked.</string>
+</dict>
+</plist>
