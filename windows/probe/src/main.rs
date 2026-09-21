@@ -36,11 +36,10 @@ mod windows_probe {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetDesktopWindow, GetSystemMetrics,
-        GetWindowDisplayAffinity, PeekMessageW, PrintWindow, RegisterClassW,
-        SetWindowDisplayAffinity, ShowWindow, TranslateMessage, MSG, PM_REMOVE,
-        PW_RENDERFULLCONTENT, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE,
-        WDA_MONITOR, WDA_NONE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST, WS_POPUP,
+        GetWindowDisplayAffinity, PeekMessageW, RegisterClassW, SetWindowDisplayAffinity,
+        ShowWindow, TranslateMessage, MSG, PM_REMOVE, PW_RENDERFULLCONTENT, SM_CXSCREEN,
+        SM_CYSCREEN, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WNDCLASSW,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{SetLayeredWindowAttributes, LWA_ALPHA};
 
