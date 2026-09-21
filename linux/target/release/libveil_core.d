@@ -1,0 +1,1 @@
+/home/skyfx/veil/linux/target/release/libveil_core.rlib: /home/skyfx/veil/linux/veil-core/src/claude.rs /home/skyfx/veil/linux/veil-core/src/config.rs /home/skyfx/veil/linux/veil-core/src/deepgram.rs /home/skyfx/veil/linux/veil-core/src/lib.rs /home/skyfx/veil/linux/veil-core/src/transcript.rs /home/skyfx/veil/linux/veil-core/src/trigger.rs

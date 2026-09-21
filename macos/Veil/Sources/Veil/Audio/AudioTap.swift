@@ -7,6 +7,7 @@
 //  feed the transcript back into itself.
 
 import AVFoundation
+import AppKit
 import CoreAudio
 import Foundation
 
@@ -60,11 +61,11 @@ final class ProcessAudioTap {
             // Global mixdown minus ourselves. Prevents TTS feedback loops.
             let selfObject = (try? Self.processObject(for: ProcessInfo.processInfo.processIdentifier))
                 .flatMap { $0 }
-            let excluded = selfObject.map { [NSNumber(value: $0)] } ?? []
+            // The SDK bridges these as [AudioObjectID], not [NSNumber].
+            let excluded: [AudioObjectID] = selfObject.map { [$0] } ?? []
             description = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
         } else {
-            description = CATapDescription(
-                stereoMixdownOfProcesses: processObjects.map { NSNumber(value: $0) })
+            description = CATapDescription(stereoMixdownOfProcesses: processObjects)
         }
         description.name = "veil-far-end"
         description.uuid = UUID()

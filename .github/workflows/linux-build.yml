@@ -1,0 +1,51 @@
+name: Linux build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'linux/**'
+      - '.github/workflows/linux-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: linux
+      # No system dev packages needed: rustls instead of openssl, and audio is
+      # pw-record at runtime rather than a linked library.
+      - name: Build
+        working-directory: linux
+        run: cargo build --release --workspace --all-targets
+      - name: Test
+        working-directory: linux
+        run: cargo test --release --workspace
+      # Advisory, not a gate: rustfmt and clippy are not installed on the dev
+      # machine, so gating on them would mean fixing style blind from CI logs.
+      # Build and test above are the hard gates.
+      - name: Clippy
+        continue-on-error: true
+        working-directory: linux
+        run: cargo clippy --release --workspace --all-targets
+      - name: Format
+        continue-on-error: true
+        working-directory: linux
+        run: cargo fmt --all --check
+      - name: Extension syntax
+        working-directory: linux/gnome-extension
+        run: |
+          sed 's|^import .*$||' extension.js | sed 's|^export default class|class|' > /tmp/check.mjs
+          node --check /tmp/check.mjs
+          node -e "JSON.parse(require('fs').readFileSync('metadata.json'))"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: veil-daemon-linux
+          path: linux/target/release/veil-daemon
+          if-no-files-found: warn

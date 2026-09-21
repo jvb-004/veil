@@ -90,3 +90,55 @@ is not.
 screen-share pixel stream", which is a much smaller claim. Process enumeration,
 TCC grants, virtual audio devices, outbound WebSockets, a fixed answer latency
 and reading eye movement all remain. This repo will not pretend otherwise.
+
+## Linux
+
+Measured on Fedora 44, GNOME 50, Mutter 50, PipeWire 1.6.9, Wayland.
+
+**Audio is the easy part.** The far end of the call is already on the default
+sink's monitor source. `pw-record` hands it over as 16 kHz mono s16, which is
+exactly what the ASR wants, with no driver, no virtual device, no permission
+prompt and no resampler in this codebase to get subtly wrong. Verified on real
+hardware: peak 4546 off the monitor, 95 KB off the microphone.
+
+**Capture detection is exact, not heuristic.** On macOS the watchdog has to
+sniff for Zoom's `CptHost` helper and for sharing toolbars. On Linux every
+screen share goes through xdg-desktop-portal and the compositor publishes the
+capture into the PipeWire graph, where we can simply read it.
+
+The signature was measured rather than assumed, using a Mutter *virtual*
+monitor session so no real screen content was ever captured:
+
+```
+media.class = "Stream/Output/Video"   node.name = "gnome-shell"
+```
+
+Not `Video/Source`. That class is cameras, and a webcam is exactly the false
+positive that would otherwise blank your overlay every call. The compiled
+watchdog was then run against a live session and flips `false -> true -> false`
+on the transitions.
+
+Because it is the graph and not a guess, it also reports **scope** (what is
+being captured) and **consumers** (who is attached), so an overlay can decide
+that a share of somebody else's window is none of its business.
+
+**The overlay is a GNOME Shell extension.** Mutter has no layer-shell, so no
+ordinary window can sit above a fullscreen Zoom without fighting the focus
+stack. A shell widget is drawn by the compositor itself: always on top, never
+focusable, absent from the window switcher and from the overview. The daemon
+and the extension talk over D-Bus (`dev.veil.Daemon1`), which is also the seam
+where a gtk4-layer-shell client drops in for wlroots compositors.
+
+```
+linux/gnome-extension/install.sh     # then log out, log in
+gnome-extensions enable veil@veil.dev
+DEEPGRAM_API_KEY=... ANTHROPIC_API_KEY=... linux/target/release/veil-daemon
+```
+
+### Known debt
+
+`veil-core` duplicates the transcript, trigger and answering logic that
+`macos/Veil` implements in Swift. The plan is a C ABI on this crate with the
+Swift side reduced to a UI shim, rather than two copies of the trigger
+heuristics drifting apart. Until that lands, changes to one need mirroring in
+the other.

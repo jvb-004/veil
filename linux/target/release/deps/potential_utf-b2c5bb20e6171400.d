@@ -1,0 +1,9 @@
+/home/skyfx/veil/linux/target/release/deps/potential_utf-b2c5bb20e6171400.d: /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/lib.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/uchar.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/ustr.rs
+
+/home/skyfx/veil/linux/target/release/deps/libpotential_utf-b2c5bb20e6171400.rlib: /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/lib.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/uchar.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/ustr.rs
+
+/home/skyfx/veil/linux/target/release/deps/libpotential_utf-b2c5bb20e6171400.rmeta: /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/lib.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/uchar.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/ustr.rs
+
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/lib.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/uchar.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/potential_utf-0.1.6/src/ustr.rs:

@@ -21,19 +21,28 @@ jobs:
       - run: sw_vers && swift --version
       - name: Build
         working-directory: macos/Veil
-        run: swift build -c release 2>&1 | tail -60
+        run: |
+          # A bare pipe into tail returns tail's exit status, which is always 0.
+          # That turned three compile errors into a green check once already.
+          set -o pipefail
+          swift build -c release 2>&1 | tail -80
       - name: Confirm the Info.plist made it into the binary
         working-directory: macos/Veil
         run: |
-          otool -P .build/release/Veil | head -30 || echo "no __info_plist section found"
+          set -o pipefail
+          otool -P .build/release/Veil | head -30
       - name: Smoke run (launches, prints, exits)
         working-directory: macos/Veil
         run: |
           # No TCC consent on a runner, so audio will fail. That is fine: we are
           # checking that it starts, wires up and logs rather than crashing.
-          ( ./.build/release/Veil & echo $! > /tmp/veil.pid ) 
+          ./.build/release/Veil &
+          PID=$!
           sleep 6
-          kill "$(cat /tmp/veil.pid)" 2>/dev/null || true
+          if ! kill -0 "$PID" 2>/dev/null; then
+            echo "process died within 6 seconds"; exit 1
+          fi
+          kill "$PID" 2>/dev/null || true
           echo "survived 6 seconds"
       - uses: actions/upload-artifact@v4
         if: always()

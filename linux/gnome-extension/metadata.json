@@ -1,0 +1,8 @@
+{
+  "uuid": "veil@veil.dev",
+  "name": "veil overlay",
+  "description": "Draws the veil copilot overlay inside the compositor, above everything, without ever taking focus.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/jvb-004/veil",
+  "session-modes": ["user"]
+}

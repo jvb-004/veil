@@ -1,0 +1,31 @@
+/* Low contrast on purpose. It has to be readable at a glance and forgettable
+   in peripheral vision, because the user is supposed to be looking at a camera. */
+.veil-overlay {
+    background-color: rgba(18, 18, 20, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+    padding: 12px 16px;
+    spacing: 6px;
+    color: #f2f2f2;
+}
+
+/* A speculative answer may still be superseded, so it says so quietly. */
+.veil-speculative {
+    border: 1px solid rgba(255, 196, 0, 0.35);
+}
+
+.veil-question {
+    font-size: 11px;
+    color: rgba(242, 242, 242, 0.55);
+}
+
+.veil-body {
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.veil-status {
+    font-size: 9px;
+    font-family: monospace;
+    color: rgba(242, 242, 242, 0.35);
+}
