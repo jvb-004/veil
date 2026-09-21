@@ -1,0 +1,70 @@
+name: Windows build and probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'windows/**'
+      - 'core/**'
+      - '.github/workflows/windows-build.yml'
+
+jobs:
+  build:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Windows build
+        run: |
+          cmd /c ver
+          cargo build --release -p veil-windows -p veil-probe-windows
+
+      - name: Run capture probe
+        env:
+          VEIL_PROBE_OUT: ${{ github.workspace }}\probe-${{ matrix.runner }}.json
+        run: cargo run --release -p veil-probe-windows
+
+      - name: Summarise
+        if: always()
+        shell: bash
+        run: |
+          F="probe-${{ matrix.runner }}.json"
+          {
+            echo "## ${{ matrix.runner }}"
+            if [ -s "$F" ]; then
+              echo ""
+              echo "**verdict:** \`$(jq -r .verdict "$F")\`"
+              echo ""
+              echo "protected window affinity: \`$(jq -r .protected_window_affinity "$F")\` · control: \`$(jq -r .control_window_affinity "$F")\`"
+              echo ""
+              echo "magenta = protected window · cyan = unprotected control in the same frame"
+              echo ""
+              echo "| path | magenta | cyan |"
+              echo "|---|---|---|"
+              echo "| A BitBlt from screen DC | $(jq -r .A_bitblt_screen_dc.magenta "$F") | $(jq -r .A_bitblt_screen_dc.cyan "$F") |"
+              echo "| B PrintWindow RENDERFULLCONTENT | $(jq -r .B_printwindow_desktop.magenta "$F") | $(jq -r .B_printwindow_desktop.cyan "$F") |"
+              echo ""
+              echo "<details><summary>raw</summary>"; echo ""
+              echo '```json'; cat "$F"; echo '```'
+              echo "</details>"
+            else
+              echo "no report produced"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: veil-windows-${{ matrix.runner }}
+          path: |
+            probe-*.json
+            target/release/veil-windows.exe
+          if-no-files-found: warn

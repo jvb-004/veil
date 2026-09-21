@@ -1,0 +1,12 @@
+/home/skyfx/veil/target/debug/deps/writeable-904e61c5a33eda62.d: /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/lib.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/cmp.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/concat.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/impls.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/ops.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/parts_write_adapter.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/replace.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/try_writeable.rs
+
+/home/skyfx/veil/target/debug/deps/libwriteable-904e61c5a33eda62.rmeta: /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/lib.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/cmp.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/concat.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/impls.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/ops.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/parts_write_adapter.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/replace.rs /home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/try_writeable.rs
+
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/lib.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/cmp.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/concat.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/impls.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/ops.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/parts_write_adapter.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/replace.rs:
+/home/skyfx/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/writeable-0.6.4/src/try_writeable.rs:

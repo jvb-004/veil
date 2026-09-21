@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'linux/**'
+      - 'core/**'
       - '.github/workflows/linux-build.yml'
 
 jobs:
@@ -17,25 +18,22 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: linux
       # No system dev packages needed: rustls instead of openssl, and audio is
       # pw-record at runtime rather than a linked library.
+      # The whole workspace builds on Linux: the Windows crates are target-gated
+      # down to a stub main, so a cross-platform break shows up here immediately.
       - name: Build
-        working-directory: linux
         run: cargo build --release --workspace --all-targets
       - name: Test
-        working-directory: linux
         run: cargo test --release --workspace
       # Advisory: clippy-driver needs an upstream rust-std and sysroot that a
       # distro-packaged toolchain does not provide, so it cannot be run on the
       # dev machine and gating on it would mean fixing lints blind from logs.
       - name: Clippy
         continue-on-error: true
-        working-directory: linux
         run: cargo clippy --release --workspace --all-targets
       # A gate: rustfmt runs locally, so there is no excuse for drift.
       - name: Format
-        working-directory: linux
         run: cargo fmt --all --check
       - name: Extension syntax
         working-directory: linux/gnome-extension
@@ -47,5 +45,5 @@ jobs:
         if: always()
         with:
           name: veil-daemon-linux
-          path: linux/target/release/veil-daemon
+          path: target/release/veil-daemon
           if-no-files-found: warn
