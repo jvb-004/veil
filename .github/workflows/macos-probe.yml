@@ -1,0 +1,101 @@
+name: macOS capture probe
+
+# Answers one question, per OS build, with evidence instead of blog posts:
+# does a window that asks not to be captured actually stay out of a screen share?
+#
+# macos-14  -> before the reported 15.4 cliff, expect FULLY_EXCLUDED
+# macos-15  -> at/after the cliff, expect LEGACY_ONLY
+# macos-26  -> expect LEGACY_ONLY or WINDOW_STOPPED_RENDERING
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'macos/Probe/**'
+      - '.github/workflows/macos-probe.yml'
+
+jobs:
+  probe:
+    name: probe ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, macos-15, macos-26]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Runner facts
+        run: |
+          sw_vers
+          uname -m
+          swift --version || true
+          echo "--- displays ---"
+          system_profiler SPDisplaysDataType 2>/dev/null | head -40 || echo "no display info"
+
+      - name: TCC state (best effort, never fatal)
+        run: |
+          # We cannot consent on a headless runner. Record what the state is so the
+          # report is interpretable: a control run that sees nothing means TCC denial,
+          # not exclusion. The probe encodes that distinction in its verdict.
+          echo "screen recording db (user):"
+          ls -l "$HOME/Library/Application Support/com.apple.TCC/TCC.db" 2>/dev/null || echo "  absent"
+          echo "csrutil:"; csrutil status || true
+          echo "smoke test: can screencapture write a file at all?"
+          /usr/sbin/screencapture -x /tmp/tcc-smoke.png 2>&1 || true
+          if [ -s /tmp/tcc-smoke.png ]; then
+            echo "  yes, $(stat -f%z /tmp/tcc-smoke.png) bytes"
+          else
+            echo "  no output, screen capture is blocked or there is no display"
+          fi
+
+      - name: Build probe
+        working-directory: macos/Probe
+        run: swift build -c release 2>&1 | tail -30
+
+      - name: Run probe
+        working-directory: macos/Probe
+        env:
+          VEIL_PROBE_OUT: ${{ github.workspace }}/probe-${{ matrix.runner }}.json
+        run: |
+          set -o pipefail
+          ./.build/release/Probe | tee "$VEIL_PROBE_OUT.stdout"
+
+      - name: Summarise
+        if: always()
+        run: |
+          F="${{ github.workspace }}/probe-${{ matrix.runner }}.json"
+          {
+            echo "## ${{ matrix.runner }}"
+            if [ -s "$F" ]; then
+              echo ""
+              echo "**verdict:** \`$(jq -r .verdict "$F")\`  "
+              echo "os \`$(jq -r .os_version "$F")\` · arch \`$(jq -r .arch "$F")\` · past 15.4 cliff: \`$(jq -r .past_15_4_cliff "$F")\`"
+              echo ""
+              echo "| path | control (.readOnly) | test (.none) |"
+              echo "|---|---|---|"
+              echo "| A ScreenCaptureKit display | $(jq -r .control.A_screencapturekit_display "$F") | $(jq -r .test.A_screencapturekit_display "$F") |"
+              echo "| B CGWindowList display | $(jq -r .control.B_cgwindowlist_display "$F") | $(jq -r .test.B_cgwindowlist_display "$F") |"
+              echo "| C screencapture CLI | $(jq -r .control.C_screencapture_cli "$F") | $(jq -r .test.C_screencapture_cli "$F") |"
+              echo "| D own window backing store | $(jq -r .control.D_own_window_backing_store "$F") | $(jq -r .test.D_own_window_backing_store "$F") |"
+              echo ""
+              echo "audio: default output \`$(jq -r .audio.has_default_output "$F")\` · process tap created \`$(jq -r .audio.process_tap_created "$F")\` (status \`$(jq -r .audio.process_tap_status "$F")\`)"
+              echo ""
+              echo "<details><summary>raw</summary>"; echo ""
+              echo '```json'; cat "$F"; echo '```'
+              echo "</details>"
+            else
+              echo "no report produced (build or launch failed)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ matrix.runner }}
+          path: |
+            probe-*.json
+            probe-*.json.stdout
+          if-no-files-found: warn
