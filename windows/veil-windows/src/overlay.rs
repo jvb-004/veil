@@ -31,10 +31,17 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowDisplayAffinity,
     PostQuitMessage, RegisterClassW, SetLayeredWindowAttributes, SetWindowDisplayAffinity,
-    ShowWindow, TranslateMessage, LWA_ALPHA, MSG, SW_SHOWNOACTIVATE, WDA_EXCLUDEFROMCAPTURE,
-    WDA_NONE, WM_DESTROY, WM_PAINT, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    ShowWindow, TranslateMessage, LWA_ALPHA, MSG, SW_HIDE, SW_SHOWNOACTIVATE,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WM_DESTROY, WM_PAINT, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
+
+/// The watchdog's self-test looks for this on screen. If a screen capture can
+/// see it, the exclusion is not working, whatever the flag reports. It is
+/// small and sits in the corner, so it also reads as a quiet status light.
+pub const MARKER_WIDTH: i32 = 18;
+pub const MARKER_HEIGHT: i32 = 4;
+const MARKER_COLORREF: u32 = 0x00FF_00FF; // BGR: magenta
 
 /// What the window currently says. The message loop owns the window, so this
 /// is how the rest of the program talks to it.
@@ -43,6 +50,29 @@ static WINDOW: OnceLock<usize> = OnceLock::new();
 
 fn text_slot() -> &'static Mutex<String> {
     TEXT.get_or_init(|| Mutex::new(String::from("veil")))
+}
+
+/// Blocks briefly until the message loop has created the window.
+pub fn wait_for_window(timeout: std::time::Duration) -> Option<usize> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if let Some(&handle) = WINDOW.get() {
+            return Some(handle);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    None
+}
+
+pub fn set_visible(visible: bool) {
+    if let Some(&handle) = WINDOW.get() {
+        unsafe {
+            ShowWindow(
+                handle as HWND,
+                if visible { SW_SHOWNOACTIVATE } else { SW_HIDE },
+            );
+        }
+    }
 }
 
 pub fn set_text(text: &str) {
@@ -191,6 +221,17 @@ unsafe extern "system" fn window_proc(
 
             SelectObject(hdc, previous);
             DeleteObject(font as *mut c_void);
+
+            let marker_brush = CreateSolidBrush(MARKER_COLORREF as COLORREF);
+            let marker = RECT {
+                left: paint.rcPaint.left + 14,
+                top: paint.rcPaint.bottom - 10,
+                right: paint.rcPaint.left + 14 + MARKER_WIDTH,
+                bottom: paint.rcPaint.bottom - 10 + MARKER_HEIGHT,
+            };
+            FillRect(hdc, &marker, marker_brush);
+            DeleteObject(marker_brush as *mut c_void);
+
             EndPaint(hwnd, &paint);
             0
         }

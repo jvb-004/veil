@@ -12,6 +12,8 @@
 mod audio;
 #[cfg(windows)]
 mod overlay;
+#[cfg(windows)]
+mod watchdog;
 
 #[cfg(not(windows))]
 fn main() {
@@ -28,6 +30,30 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
     runtime.spawn(pipeline());
+
+    // The window does not exist until the message loop below creates it, so
+    // the watchdog waits for the handle rather than racing it.
+    std::thread::spawn(|| {
+        let Some(handle) = overlay::wait_for_window(std::time::Duration::from_secs(5)) else {
+            tracing::error!("overlay never appeared; watchdog not started");
+            return;
+        };
+        let mut hidden = false;
+        for state in watchdog::spawn(handle) {
+            if state.exclusion_checked && !state.exclusion_holding {
+                // The flag is lying. This is the exact case the design exists
+                // for, so it is loud rather than silent.
+                tracing::error!("capture exclusion is NOT working; hiding overlay");
+            }
+            for reason in &state.reasons {
+                tracing::info!("watchdog: {reason}");
+            }
+            if state.capture_suspected != hidden {
+                hidden = state.capture_suspected;
+                overlay::set_visible(!hidden);
+            }
+        }
+    });
 
     // Blocks until the window closes.
     overlay::run(520, 240)
