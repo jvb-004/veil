@@ -1,0 +1,1 @@
+/home/skyfx/veil/target/release/answer-once: /home/skyfx/veil/core/src/claude.rs /home/skyfx/veil/core/src/config.rs /home/skyfx/veil/core/src/deepgram.rs /home/skyfx/veil/core/src/lib.rs /home/skyfx/veil/core/src/resample.rs /home/skyfx/veil/core/src/transcript.rs /home/skyfx/veil/core/src/trigger.rs /home/skyfx/veil/linux/veil-daemon/src/bin/answer-once.rs
